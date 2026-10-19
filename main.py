@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import threading
+import time
 from typing import List, Optional
 
 import telebot
@@ -13,12 +14,19 @@ try:
 except Exception:  # pragma: no cover
     TikTokLiveClient = None
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+)
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "6037c05b589db1c23499c5b857e0d5c1")
-bot = telebot.TeleBot(TOKEN, parse_mode=None)
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or ""
+if not TOKEN:
+    logging.warning("TELEGRAM_BOT_TOKEN is empty. Bot will not connect until it is set.")
 
+bot = telebot.TeleBot(TOKEN, parse_mode=None) if TOKEN else None
 ACCOUNTS_FILE = os.getenv("ACCOUNTS_FILE", "accounts.txt")
+MAX_PARALLEL_ACTIONS = int(os.getenv("MAX_PARALLEL_ACTIONS", "3"))
+
 RANDOM_COMMENTS = [
     "🔥 أكشن حلو جدًا!",
     "💪 دعم ممتاز!",
@@ -28,7 +36,11 @@ RANDOM_COMMENTS = [
     "🔥 متابعة دايمًا!",
     "❤️ حلو جدًا!",
     "👍 رائع جدًا!",
+    "💥 ممتاز جدًا!",
+    "🎯 تفاعل قوي!",
 ]
+
+_ACTIVE_THREADS: List[threading.Thread] = []
 
 
 def ensure_accounts_file() -> None:
@@ -69,7 +81,9 @@ def delete_account(index: int) -> Optional[str]:
 
 
 def normalize_username(value: str) -> str:
-    cleaned = (value or "").strip().replace("@", "").replace("https://www.tiktok.com/@", "")
+    cleaned = (value or "").strip().replace("@", "")
+    cleaned = cleaned.replace("https://www.tiktok.com/@", "")
+    cleaned = cleaned.replace("https://www.tiktok.com/", "")
     return cleaned.strip("/")
 
 
@@ -92,11 +106,13 @@ def build_main_menu() -> types.ReplyKeyboardMarkup:
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
+    if bot is None:
+        return
     markup = build_main_menu()
     bot.send_message(
         message.chat.id,
-        "🤖 أهلاً بك في لوحة تحكم تيك توك الآمنة.\n"
-        "اختر أي أمر من الأزرار الموجودة أدناه:\n\n"
+        "🤖 أهلاً بك في لوحة تحكم تيك توك.\n"
+        "اختر أي أمر من الأزرار أدناه:\n\n"
         "⚡ تكبيس\n"
         "💬 تعليقات عشوائية\n"
         "✍️ تعليق موحد\n"
@@ -107,8 +123,25 @@ def send_welcome(message):
     )
 
 
+@bot.message_handler(commands=['status', 'info'])
+def status_command(message):
+    if bot is None:
+        return
+    accounts = load_accounts()
+    bot.send_message(
+        message.chat.id,
+        f"📊 حالة البوت:\n"
+        f"- عدد الجلسات المحفوظة: {len(accounts)}\n"
+        f"- حالات التشغيل: {'مفعّل' if TOKEN else 'غير مفعّل'}\n"
+        f"- TikTokLive: {'موجود' if TikTokLiveClient else 'غير موجود'}\n"
+        f"- أقصى نفس الوقت: {MAX_PARALLEL_ACTIONS}",
+    )
+
+
 @bot.message_handler(func=lambda message: True)
 def handle_messages(message):
+    if bot is None:
+        return
     text = (message.text or "").strip()
 
     if text == "⚡ ( تكبيس )":
@@ -120,20 +153,20 @@ def handle_messages(message):
         bot.register_next_step_handler(msg, execute_random_comment_task)
 
     elif text == "✍️ ( تعليق موحد )":
-        msg = bot.send_message(message.chat.id, "✍️ أرسل نص التعليق الموحد الذي تريد إرساله:")
+        msg = bot.send_message(message.chat.id, "✍️ أرسل نص التعليق الموحد الآن:")
         bot.register_next_step_handler(msg, get_comment_text)
 
     elif text == "➕ ( إضافة جلسة حساب )":
         msg = bot.send_message(
             message.chat.id,
-            "➕ أرسل جلسة الحساب / Session / Cookie / Token مباشرة، ويمكنك إرسال أي نص بيانات الجلسة المكون من 5 أحرف فأكثر:",
+            "➕ أرسل نص الجلسة / Session / Cookie / Token.\nيمكنك إرسال أي نص يدعم الجلسة من 5 أحرف فأكثر.",
         )
         bot.register_next_step_handler(msg, save_session_step)
 
     elif text == "📊 ( عدد الحسابات )":
         accounts = load_accounts()
         if not accounts:
-            bot.send_message(message.chat.id, "⚠️ لا توجد أي جلسات محفوظة حالياً.")
+            bot.send_message(message.chat.id, "⚠️ لا توجد جلسات محفوظة حتى الآن.")
         else:
             bot.send_message(message.chat.id, f"📊 عدد الحسابات المحفوظة: {len(accounts)}")
 
@@ -142,20 +175,21 @@ def handle_messages(message):
         if not accounts:
             bot.send_message(message.chat.id, "⚠️ لا توجد جلسات للحذف.")
             return
-
         response = "🗑️ اختر رقم الجلسة المراد حذفها:\n\n"
         for i, acc in enumerate(accounts, 1):
-            short = acc[:20] + "..." if len(acc) > 20 else acc
+            short = acc[:18] + "..." if len(acc) > 18 else acc
             response += f"{i} - {short}\n"
-        response += "\n��رسل الرقم فقط الآن:"
+        response += "\nأرسل الرقم فقط الآن:"
         msg = bot.send_message(message.chat.id, response)
         bot.register_next_step_handler(msg, delete_session_step)
 
 
 def save_session_step(message):
+    if bot is None:
+        return
     session_text = (message.text or "").strip()
     if len(session_text) < 5:
-        bot.send_message(message.chat.id, "❌ النص قصير جداً. أعد الإرسال بصيغة بيانات الجلسة الصحيحة.")
+        bot.send_message(message.chat.id, "❌ النص قصير جداً. أعد المحاولة.)")
         return
 
     if save_account(session_text):
@@ -165,6 +199,8 @@ def save_session_step(message):
 
 
 def delete_session_step(message):
+    if bot is None:
+        return
     try:
         index = int((message.text or "").strip()) - 1
         deleted = delete_account(index)
@@ -177,15 +213,22 @@ def delete_session_step(message):
 
 
 def get_comment_text(message):
+    if bot is None:
+        return
     comment = (message.text or "").strip()
     if not comment:
         bot.send_message(message.chat.id, "❌ التعليق فارغ. أعد المحاولة.")
         return
-    msg = bot.send_message(message.chat.id, f"📝 تم اعتماد التعليق: {comment}\n\nالآن أرسل اسم المستخدم (يوزر البث) المستهدف:")
+    msg = bot.send_message(
+        message.chat.id,
+        f"📝 تم اعتماد التعليق: {comment}\n\nالآن ارسل اسم المستخدم (يوزر البث) المستهدف:",
+    )
     bot.register_next_step_handler(msg, execute_comment_task, comment)
 
 
 def execute_tapping_task(message):
+    if bot is None:
+        return
     target_user = normalize_username(message.text)
     if not target_user:
         bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
@@ -193,23 +236,19 @@ def execute_tapping_task(message):
 
     accounts = load_accounts()
     if not accounts:
-        bot.send_message(message.chat.id, "⚠️ لا توجد جلسات محفوظة، أضف جلسة أولاً من زر (➕ إضافة جلسة حساب).")
+        bot.send_message(message.chat.id, "⚠️ لا توجد جلسات محفوظة، أضف جلسة أولاً.")
         return
 
     bot.send_message(
         message.chat.id,
         f"⚡ جاري تنفيذ التكبيس على بث @{target_user} عبر {len(accounts)} جلسة محفوظة...",
     )
-    for session in accounts:
-        thread = threading.Thread(
-            target=run_live_action_worker,
-            args=(session, target_user, "like", None),
-            daemon=True,
-        )
-        thread.start()
+    queue_live_action_for_all(accounts, target_user, "like")
 
 
 def execute_random_comment_task(message):
+    if bot is None:
+        return
     target_user = normalize_username(message.text)
     if not target_user:
         bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
@@ -217,24 +256,20 @@ def execute_random_comment_task(message):
 
     accounts = load_accounts()
     if not accounts:
-        bot.send_message(message.chat.id, "⚠️ لا توجد جلسات محفوظة، أضف جلسة أولاً.")
+        bot.send_message(message.chat.id, "⚠️ لا توجد جلسات محفوظة. أضف جلسة أولاً.")
         return
 
     comment = random.choice(RANDOM_COMMENTS)
     bot.send_message(
         message.chat.id,
-        f"💬 جاري إرسال تعليق عشوائي على بث @{target_user}: \"{comment}\"",
+        f"💬 جاري إرسال تعليق عشوائي على @{target_user}: \"{comment}\"",
     )
-    for session in accounts:
-        thread = threading.Thread(
-            target=run_live_action_worker,
-            args=(session, target_user, "comment", comment),
-            daemon=True,
-        )
-        thread.start()
+    queue_live_action_for_all(accounts, target_user, "comment", comment)
 
 
 def execute_comment_task(message, comment: str):
+    if bot is None:
+        return
     target_user = normalize_username(message.text)
     if not target_user:
         bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
@@ -242,63 +277,76 @@ def execute_comment_task(message, comment: str):
 
     accounts = load_accounts()
     if not accounts:
-        bot.send_message(message.chat.id, "⚠️ لا توجد جلسات محفوظة، أضف جلسة أولاً.")
+        bot.send_message(message.chat.id, "⚠️ لا توجد جلسات محفوظة. أضف جلسة أولاً.")
         return
 
     bot.send_message(
         message.chat.id,
-        f"✍️ جاري إرسال تعليق موحد على بث @{target_user}: \"{comment}\"",
+        f"✍️ جاري إرسال التعليق الموحد على @{target_user}: \"{comment}\"",
     )
+    queue_live_action_for_all(accounts, target_user, "comment", comment)
+
+
+def queue_live_action_for_all(accounts: List[str], target_user: str, action: str, comment: Optional[str] = None) -> None:
+    running = [t for t in _ACTIVE_THREADS if t.is_alive()]
+    if len(running) >= MAX_PARALLEL_ACTIONS:
+        logging.warning("Skipping action because max parallel limit reached.")
+        return
+
     for session in accounts:
         thread = threading.Thread(
             target=run_live_action_worker,
-            args=(session, target_user, "comment", comment),
+            args=(session, target_user, action, comment),
             daemon=True,
         )
+        _ACTIVE_THREADS.append(thread)
         thread.start()
+
+
+def _safe_call_method(instance, method_names, *args):
+    for name in method_names:
+        method = getattr(instance, name, None)
+        if callable(method):
+            try:
+                return method(*args)
+            except TypeError:
+                try:
+                    return method()
+                except Exception:
+                    raise
+    return None
 
 
 async def perform_tiktok_live_action(session_value: str, target_user: str, action: str, comment: Optional[str] = None) -> None:
     if TikTokLiveClient is None:
-        raise RuntimeError("TikTokLive library is not installed or import failed.")
+        raise RuntimeError("TikTokLive library is not installed.")
 
     client = TikTokLiveClient(unique_id=target_user)
     client.session_value = session_value
 
-    # هذا الحقل يتيح التعامل المباشر مع بيانات الجلسة في الأنظمة التي تدعم التحميل من ملف Session/String.
-    # إذا كانت مكتبة TikTokLive تحتاج وسيط جلسة إضافي في المستقبل، يمكن تمريره هنا من خلال إعدادات العميل.
-    _ = client
-
     try:
-        if hasattr(client, "connect"):
-            await client.connect()
-        elif hasattr(client, "start"):
-            await client.start()
+        connect_method = getattr(client, "connect", None) or getattr(client, "start", None)
+        if callable(connect_method):
+            await connect_method()
         else:
-            # بعض الإصدارات تستخدم run() مع async; إذا لم توجد طريقة connect/start نقوم برمي خطأ واضح.
-            raise AttributeError("TikTokLiveClient does not expose connect() or start()")
+            raise AttributeError("TikTokLiveClient has no connect() or start() method.")
 
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1.2)
 
         if action == "like":
-            method = None
-            for candidate in ("like", "send_like"):
-                if hasattr(client, candidate):
-                    method = getattr(client, candidate)
-                    break
-            if method is not None:
-                await method()
+            result = _safe_call_method(client, ("like", "send_like", "send_like_event", "heart"))
+            if result is not None and asyncio.iscoroutine(result):
+                await result
 
         elif action == "comment":
             final_comment = comment or random.choice(RANDOM_COMMENTS)
-            method = None
-            for candidate in ("send_comment", "comment"):
-                if hasattr(client, candidate):
-                    method = getattr(client, candidate)
-                    break
-            if method is not None:
-                await method(final_comment)
+            result = _safe_call_method(client, ("comment", "send_comment", "post_comment"), final_comment)
+            if result is not None and asyncio.iscoroutine(result):
+                await result
 
+    except Exception as exc:
+        logging.exception("TikTok live action failed: %s", exc)
+        raise
     finally:
         disconnect = getattr(client, "disconnect", None)
         if callable(disconnect):
@@ -312,11 +360,23 @@ def run_live_action_worker(session_value: str, target_user: str, action: str, co
     try:
         asyncio.run(perform_tiktok_live_action(session_value, target_user, action, comment))
     except Exception as exc:
-        logging.exception("TikTok live action failed for %s / %s: %s", session_value[:20], target_user, exc)
+        logging.exception(
+            "TikTok live action failed for session=%s target=%s action=%s error=%s",
+            session_value[:20],
+            target_user,
+            action,
+            exc,
+        )
+    finally:
+        for thread in list(_ACTIVE_THREADS):
+            if not thread.is_alive():
+                _ACTIVE_THREADS.remove(thread)
 
 
 if __name__ == "__main__":
     ensure_accounts_file()
+    if not TOKEN:
+        print("ERROR: TELEGRAM_BOT_TOKEN is missing. Set it in environment variables before launching.")
+        raise SystemExit(1)
     print("TikTok Python Bot is running...")
-    bot.send_message = bot.send_message
     bot.infinity_polling(timeout=60, interval=0.5, skip_pending=True)
