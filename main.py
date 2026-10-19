@@ -3,7 +3,6 @@ import logging
 import os
 import random
 import threading
-import time
 from typing import List, Optional
 
 import telebot
@@ -19,9 +18,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or ""
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 if not TOKEN:
-    logging.warning("TELEGRAM_BOT_TOKEN is empty. Bot will not connect until it is set.")
+    logging.warning("TELEGRAM_BOT_TOKEN is empty. Bot will not connect until configured.")
 
 bot = telebot.TeleBot(TOKEN, parse_mode=None) if TOKEN else None
 ACCOUNTS_FILE = os.getenv("ACCOUNTS_FILE", "accounts.txt")
@@ -108,10 +107,11 @@ def build_main_menu() -> types.ReplyKeyboardMarkup:
 def send_welcome(message):
     if bot is None:
         return
+
     markup = build_main_menu()
     bot.send_message(
         message.chat.id,
-        "🤖 أهلاً بك في لوحة تحكم تيك توك.\n"
+        "🤖 أهلاً بك في لوحة تحكم تيك توك الاحترافية.\n"
         "اختر أي أمر من الأزرار أدناه:\n\n"
         "⚡ تكبيس\n"
         "💬 تعليقات عشوائية\n"
@@ -127,14 +127,15 @@ def send_welcome(message):
 def status_command(message):
     if bot is None:
         return
+
     accounts = load_accounts()
     bot.send_message(
         message.chat.id,
         f"📊 حالة البوت:\n"
         f"- عدد الجلسات المحفوظة: {len(accounts)}\n"
-        f"- حالات التشغيل: {'مفعّل' if TOKEN else 'غير مفعّل'}\n"
+        f"- TELEGRAM TOKEN: {'مفعّل' if bool(TOKEN) else 'غير مفعّل'}\n"
         f"- TikTokLive: {'موجود' if TikTokLiveClient else 'غير موجود'}\n"
-        f"- أقصى نفس الوقت: {MAX_PARALLEL_ACTIONS}",
+        f"- أقصى مهام متزامنة: {MAX_PARALLEL_ACTIONS}",
     )
 
 
@@ -142,6 +143,7 @@ def status_command(message):
 def handle_messages(message):
     if bot is None:
         return
+
     text = (message.text or "").strip()
 
     if text == "⚡ ( تكبيس )":
@@ -175,6 +177,7 @@ def handle_messages(message):
         if not accounts:
             bot.send_message(message.chat.id, "⚠️ لا توجد جلسات للحذف.")
             return
+
         response = "🗑️ اختر رقم الجلسة المراد حذفها:\n\n"
         for i, acc in enumerate(accounts, 1):
             short = acc[:18] + "..." if len(acc) > 18 else acc
@@ -187,9 +190,10 @@ def handle_messages(message):
 def save_session_step(message):
     if bot is None:
         return
+
     session_text = (message.text or "").strip()
     if len(session_text) < 5:
-        bot.send_message(message.chat.id, "❌ النص قصير جداً. أعد المحاولة.)")
+        bot.send_message(message.chat.id, "❌ النص قصير جداً. أعد المحاولة.")
         return
 
     if save_account(session_text):
@@ -201,6 +205,7 @@ def save_session_step(message):
 def delete_session_step(message):
     if bot is None:
         return
+
     try:
         index = int((message.text or "").strip()) - 1
         deleted = delete_account(index)
@@ -215,10 +220,12 @@ def delete_session_step(message):
 def get_comment_text(message):
     if bot is None:
         return
+
     comment = (message.text or "").strip()
     if not comment:
         bot.send_message(message.chat.id, "❌ التعليق فارغ. أعد المحاولة.")
         return
+
     msg = bot.send_message(
         message.chat.id,
         f"📝 تم اعتماد التعليق: {comment}\n\nالآن ارسل اسم المستخدم (يوزر البث) المستهدف:",
@@ -229,6 +236,7 @@ def get_comment_text(message):
 def execute_tapping_task(message):
     if bot is None:
         return
+
     target_user = normalize_username(message.text)
     if not target_user:
         bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
@@ -249,6 +257,7 @@ def execute_tapping_task(message):
 def execute_random_comment_task(message):
     if bot is None:
         return
+
     target_user = normalize_username(message.text)
     if not target_user:
         bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
@@ -270,6 +279,7 @@ def execute_random_comment_task(message):
 def execute_comment_task(message, comment: str):
     if bot is None:
         return
+
     target_user = normalize_username(message.text)
     if not target_user:
         bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
@@ -290,7 +300,7 @@ def execute_comment_task(message, comment: str):
 def queue_live_action_for_all(accounts: List[str], target_user: str, action: str, comment: Optional[str] = None) -> None:
     running = [t for t in _ACTIVE_THREADS if t.is_alive()]
     if len(running) >= MAX_PARALLEL_ACTIONS:
-        logging.warning("Skipping action because max parallel limit reached.")
+        logging.warning("Max parallel actions reached. Skipping extra tasks.")
         return
 
     for session in accounts:
@@ -378,5 +388,6 @@ if __name__ == "__main__":
     if not TOKEN:
         print("ERROR: TELEGRAM_BOT_TOKEN is missing. Set it in environment variables before launching.")
         raise SystemExit(1)
+
     print("TikTok Python Bot is running...")
     bot.infinity_polling(timeout=60, interval=0.5, skip_pending=True)
