@@ -6,7 +6,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.66.0",
-    "tiktok-live-connector": "^1.2.6"
+    "node-telegram-bot-api": "0.66.0",
+    "tiktok-live-connector": "1.2.6"
   }
 }
