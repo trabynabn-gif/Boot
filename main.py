@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import random
+import re
 import threading
 from typing import List, Optional
 
@@ -79,11 +80,26 @@ def delete_account(index: int) -> Optional[str]:
     return None
 
 
-def normalize_username(value: str) -> str:
-    cleaned = (value or "").strip().replace("@", "")
-    cleaned = cleaned.replace("https://www.tiktok.com/@", "")
-    cleaned = cleaned.replace("https://www.tiktok.com/", "")
-    return cleaned.strip("/")
+def normalize_target(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+
+    text = text.replace("@", "")
+
+    if "tiktok.com" in text.lower():
+        match = re.search(r"tiktok\.com/@?([A-Za-z0-9._-]+)", text, re.I)
+        if match:
+            return match.group(1).strip("/")
+
+    text = text.split("?", 1)[0]
+    text = text.split("#", 1)[0]
+    text = text.strip("/")
+    text = re.sub(r"^https?://", "", text)
+    text = text.replace("www.", "")
+    text = text.replace("m.", "")
+
+    return text.strip()
 
 
 def build_main_menu() -> types.ReplyKeyboardMarkup:
@@ -147,15 +163,15 @@ def handle_messages(message):
     text = (message.text or "").strip()
 
     if text == "⚡ ( تكبيس )":
-        msg = bot.send_message(message.chat.id, "🚀 أرسل اسم المستخدم (يوزر البث) المستهدف الآن:")
+        msg = bot.send_message(message.chat.id, "🚀 أرسل رابط البث المباشر أو اسم المستخدم الكامل الآن:")
         bot.register_next_step_handler(msg, execute_tapping_task)
 
     elif text == "💬 ( تعليقات عشوائية )":
-        msg = bot.send_message(message.chat.id, "💬 أرسل اسم المستخدم (يوزر البث) المستهدف الآن:")
+        msg = bot.send_message(message.chat.id, "💬 أرسل رابط البث المباشر أو اسم المستخدم الكامل الآن:")
         bot.register_next_step_handler(msg, execute_random_comment_task)
 
     elif text == "✍️ ( تعليق موحد )":
-        msg = bot.send_message(message.chat.id, "✍️ أرسل نص التعليق الموحد الآن:")
+        msg = bot.send_message(message.chat.id, "✍️ أرسل نص التعليق الموحد الآن، ثم رابط البث أو اسم المستخدم:")
         bot.register_next_step_handler(msg, get_comment_text)
 
     elif text == "➕ ( إضافة جلسة حساب )":
@@ -228,7 +244,7 @@ def get_comment_text(message):
 
     msg = bot.send_message(
         message.chat.id,
-        f"📝 تم اعتماد التعليق: {comment}\n\nالآن ارسل اسم المستخدم (يوزر البث) المستهدف:",
+        f"📝 تم اعتماد التعليق: {comment}\n\nالآن ارسل رابط البث أو اسم المستخدم الكامل:",
     )
     bot.register_next_step_handler(msg, execute_comment_task, comment)
 
@@ -237,9 +253,9 @@ def execute_tapping_task(message):
     if bot is None:
         return
 
-    target_user = normalize_username(message.text)
+    target_user = normalize_target(message.text)
     if not target_user:
-        bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
+        bot.send_message(message.chat.id, "❌ الرابط أو اسم المستخدم غير صحيح.")
         return
 
     accounts = load_accounts()
@@ -249,7 +265,7 @@ def execute_tapping_task(message):
 
     bot.send_message(
         message.chat.id,
-        f"⚡ جاري تنفيذ التكبيس على بث @{target_user} عبر {len(accounts)} جلسة محفوظة...",
+        f"⚡ جاري تنفيذ التكبيس على البث @{target_user} عبر {len(accounts)} جلسة محفوظة...",
     )
     queue_live_action_for_all(accounts, target_user, "like")
 
@@ -258,9 +274,9 @@ def execute_random_comment_task(message):
     if bot is None:
         return
 
-    target_user = normalize_username(message.text)
+    target_user = normalize_target(message.text)
     if not target_user:
-        bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
+        bot.send_message(message.chat.id, "❌ الرابط أو اسم المستخدم غير صحيح.")
         return
 
     accounts = load_accounts()
@@ -280,9 +296,9 @@ def execute_comment_task(message, comment: str):
     if bot is None:
         return
 
-    target_user = normalize_username(message.text)
+    target_user = normalize_target(message.text)
     if not target_user:
-        bot.send_message(message.chat.id, "❌ اسم المستخدم غير صالح.")
+        bot.send_message(message.chat.id, "❌ الرابط أو اسم المستخدم غير صحيح.")
         return
 
     accounts = load_accounts()
