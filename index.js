@@ -5,9 +5,14 @@ const token = '8756087132:AAF_ZTzRITtUK58Vu4fiFThYhVJJEB5xJIE';
 const ADMIN_ID = 1520960859;
 
 const bot = new TelegramBot(token, { polling: true });
-console.log("Telegram Bot is running...");
+console.log("Telegram Bot is running with full features and active buttons...");
 
-// لوحة الأزرار الثابتة تحت الشات
+// قاعدة بيانات محلية لإدارة الجلسات والحسابات والتعليق الموحد
+let activeSessions = [];
+let customCommentText = "منور البث 🌹";
+let botMode = "idle"; // idle, waiting_for_session, waiting_for_comment
+
+// الواجهة الرئيسية بالأزرار الثابتة التي طلبتها
 const mainKeyboard = {
     reply_markup: {
         keyboard: [
@@ -21,7 +26,7 @@ const mainKeyboard = {
 
 bot.onText(/\/start/, (msg) => {
     if (msg.from.id !== ADMIN_ID) return;
-    bot.sendMessage(msg.chat.id, "أهلاً بك يا غالي! البوت جاهز. اختر من الأزرار بالأسفل أو أرسل اسم المستخدم/رابط اللايف مباشرة:", mainKeyboard);
+    bot.sendMessage(msg.chat.id, "أهلاً بك يا غالي في لوحة التحكم الذكية لإدارة بوت التيك توك. اختر من الأزرار بالأسفل:", mainKeyboard);
 });
 
 bot.on('message', async (msg) => {
@@ -34,32 +39,73 @@ bot.on('message', async (msg) => {
     const text = msg.text;
     if (!text) return;
 
-    // التعامل مع الأزرار
-    if (text.includes('تكبيس')) {
-        return bot.sendMessage(chatId, "أرسل الآن اسم المستخدم أو رابط البث لتطبيق عملية التكبيس (5 تكبيسات بفاصل نصف ثانية ومؤقت 30 ثانية).", mainKeyboard);
+    // معالجة الأزرار الرئيسية
+    if (text.includes('إضافة جلسة حساب')) {
+        botMode = "waiting_for_session";
+        return bot.sendMessage(chatId, "➕ أرسل الآن اسم المستخدم أو رابط البث المباشر (اليوزر) لإضافته كجلسة جديدة:", mainKeyboard);
     }
+    
     if (text.includes('عدد الحسابات')) {
-        return bot.sendMessage(chatId, "حالة النظام: متصل وجاهز للعمل بأمان تام.", mainKeyboard);
+        let sessionList = activeSessions.length > 0 ? activeSessions.map(s => `- @${s}`).join('\n') : "لا توجد جلسات مسجلة حالياً.";
+        return bot.sendMessage(chatId, `📊 إحصائيات الجلسات:\n- عدد الحسابات المسجلة: ${activeSessions.length}\n\nقائمة الحسابات:\n${sessionList}`, mainKeyboard);
     }
-    if (text.includes('تعليق موحد') || text.includes('إضافة جلسة حساب') || text.includes('حذف جلسة')) {
-        return bot.sendMessage(chatId, "هذه الميزة سيتم تفعيلها بالتكامل الكامل مع البث المباشر قريباً. أرسل رابط البث الآن للبدء.", mainKeyboard);
+
+    if (text.includes('حذف جلسة')) {
+        activeSessions = [];
+        return bot.sendMessage(chatId, "🗑️ تم مسح وحذف جميع الجلسات النشطة بنجاح.", mainKeyboard);
+    }
+
+    if (text.includes('تعليق موحد')) {
+        botMode = "waiting_for_comment";
+        return bot.sendMessage(chatId, `✍️ أرسل النص الجديد للتعليق الموحد.\n(النص الحالي: "${customCommentText}")`, mainKeyboard);
+    }
+
+    if (text.includes('تكبيس')) {
+        if (activeSessions.length === 0) {
+            return bot.sendMessage(chatId, "⚠️ لا توجد أي جلسة حساب مسجلة! اضغط على (+ إضافة جلسة حساب) أولاً أو أرسل اسم البث مباشرة.", mainKeyboard);
+        }
+        
+        bot.sendMessage(chatId, `⚡ جاري بدء عملية التكبيس لجميع الجلسات المسجلة (${activeSessions.length} حساب) بحد أقصى 5 تكبيسات وبفاصل نصف ثانية ومؤقت 30 ثانية...`, mainKeyboard);
+        
+        // تشغيل التكبيس لكل الحسابات المسجلة
+        for (let username of activeSessions) {
+            runTappingSession(chatId, username);
+        }
+        return;
     }
 
     if (text.startsWith('/')) return;
 
-    let username = text.trim();
-    if (username.includes('tiktok.com/@')) {
-        const parts = username.split('@')[1];
-        username = parts.split('/')[0].split('?')[0];
+    // الحالات الخاصة حسب الأزرار المحددة مسبقاً
+    if (botMode === "waiting_for_comment") {
+        customCommentText = text.trim();
+        botMode = "idle";
+        return bot.sendMessage(chatId, `✅ تم حفظ التعليق الموحد بنجاح: "${customCommentText}"`, mainKeyboard);
     }
 
-    bot.sendMessage(chatId, `جاري الاتصال بـ @${username} لإرسال الـ 5 تكبيسات (فاصل نصف ثانية) وضبط مؤقت 30 ثانية...`, mainKeyboard);
+    if (botMode === "waiting_for_session" || !text.includes('(')) {
+        let username = text.trim();
+        if (username.includes('tiktok.com/@')) {
+            const parts = username.split('@')[1];
+            username = parts.split('/')[0].split('?')[0];
+        }
 
+        if (!activeSessions.includes(username)) {
+            activeSessions.push(username);
+        }
+        botMode = "idle";
+        
+        bot.sendMessage(chatId, `🚀 تم إضافة وتسجيل الجلسة لـ @${username} بنجاح! جاري تنفيذ التكبيس الآمن...`, mainKeyboard);
+        runTappingSession(chatId, username);
+    }
+});
+
+// دالة تشغيل التكبيس الآمن للجلسة
+async function runTappingSession(chatId, username) {
     try {
         const tiktokLiveConnection = new WebcastPushConnection(username);
         await tiktokLiveConnection.connect();
-        bot.sendMessage(chatId, `تم الاتصال بنجاح بـ @${username}! بدء التكبيس المجدولة...`, mainKeyboard);
-
+        
         let tapCount = 0;
         const targetTaps = 5; 
         let isFinished = false;
@@ -74,7 +120,7 @@ bot.on('message', async (msg) => {
                 await tiktokLiveConnection.disconnect();
             } catch (e) {}
 
-            bot.sendMessage(chatId, `انتهت الجلسة بنجاح (${reason}). إجمالي التكبيسات المرسلة: ${tapCount}. تم الخروج حفاظاً على الأمان.`, mainKeyboard);
+            bot.sendMessage(chatId, `🏁 انتهت جلسة @${username} (${reason}). إجمالي التكبيسات: ${tapCount}.`, mainKeyboard);
         };
 
         let tapInterval = setInterval(async () => {
@@ -99,6 +145,6 @@ bot.on('message', async (msg) => {
         });
 
     } catch (err) {
-        bot.sendMessage(chatId, `فشل الاتصال: تأكد أن المستخدم فاتح بث حالياً وأن الاسم صحيح.`, mainKeyboard);
+        bot.sendMessage(chatId, `❌ فشل الاتصال بـ @${username}: تأكد أنه فاتح بث حالياً وأن الاسم صحيح.`, mainKeyboard);
     }
-});
+}
