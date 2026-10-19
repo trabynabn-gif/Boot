@@ -9,13 +9,12 @@ console.log("Telegram Bot is running...");
 
 bot.onText(/\/start/, (msg) => {
     if (msg.from.id !== ADMIN_ID) return;
-    bot.sendMessage(msg.chat.id, "أهلاً بك يا غالي! أرسل رابط اللايف أو اسم المستخدم لبدء التكبيس.");
+    bot.sendMessage(msg.chat.id, "أهلاً بك يا غالي! أرسل رابط اللايف أو اسم المستخدم لبدء إرسال 5 تكبيسات (بين كل تكبيسة نصف ثانية) ومدة أقصاها 30 ثانية.");
 });
 
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     
-    // التحقق من الأي دي (فلتر الحماية)
     if (msg.from.id !== ADMIN_ID) {
         return bot.sendMessage(chatId, "عذراً، هذا البوت مخصص للاستخدام الشخصي فقط.");
     }
@@ -29,25 +28,54 @@ bot.on('message', async (msg) => {
         username = parts.split('/')[0].split('?')[0];
     }
 
-    bot.sendMessage(chatId, `جاري الاتصال بـ @${username} وبدء التكبيس...`);
+    bot.sendMessage(chatId, `جاري الاتصال بـ @${username} لإرسال 5 تكبيسات (فاصل نصف ثانية) وضبط مؤقت 30 ثانية...`);
 
     try {
         const tiktokLiveConnection = new WebcastPushConnection(username);
         await tiktokLiveConnection.connect();
-        bot.sendMessage(chatId, `تم الاتصال بنجاح بـ @${username}! جارٍ إرسال التفاعلات...`);
+        bot.sendMessage(chatId, `تم الاتصال بنجاح بـ @${username}! بدء عملية التكبيس المجدولة...`);
 
+        let tapCount = 0;
+        const targetTaps = 5; // 5 تكبيسات مستهدفة
+        let isFinished = false;
+
+        const stopSession = async (reason) => {
+            if (isFinished) return;
+            isFinished = true;
+            clearInterval(tapInterval);
+            clearTimeout(timeOut);
+            
+            try {
+                await tiktokLiveConnection.disconnect();
+            } catch (e) {}
+
+            bot.sendMessage(chatId, `انتهت الجلسة بنجاح (${reason}). إجمالي التكبيسات المرسلة: ${tapCount}. تم الخروج حفاظاً على الأمان.`);
+        };
+
+        // إرسال 5 تكبيسات بفاصل نصف ثانية (500 ملي ثانية) بين الواحدة والأخرى
         let tapInterval = setInterval(async () => {
+            if (isFinished) return;
+            if (tapCount >= targetTaps) {
+                stopSession("تم إرسال الـ 5 تكبيسات المطلوبة بنجاح");
+                return;
+            }
+
             try {
                 await tiktokLiveConnection.like?.();
+                tapCount++;
             } catch (err) {}
-        }, 1000);
+        }, 500); // نصف ثانية لكل تكبيسة
+
+        // مؤقت أقصى مدته 30 ثانية كحماية إضافية
+        let timeOut = setTimeout(() => {
+            stopSession("انتهاء الحد الأقصى للوقت (30 ثانية)");
+        }, 30000);
 
         tiktokLiveConnection.on('disconnected', () => {
-            clearInterval(tapIntent);
-            bot.sendMessage(chatId, `انتهى بث @${username}.`);
+            stopSession("انقطع الاتصال بالبث");
         });
 
     } catch (err) {
-        bot.sendMessage(chatId, `فشل الاتصال: تأكد أن المستخدم فاتح بث حالياً.`);
+        bot.sendMessage(chatId, `فشل الاتصال: تأكد أن المستخدم فاتح بث حالياً وأن الاسم صحيح.`);
     }
 });
