@@ -1,21 +1,25 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { WebcastPushConnection } = require('tiktok-live-connector');
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
-if (!token) {
-    console.error("Error: TELEGRAM_BOT_TOKEN is missing!");
-    process.exit(1);
-}
+const token = '8756087132:AAF_ZTzRITtUK58Vu4fiFThYhVJJEB5xJIE';
+const ADMIN_ID = 1520960859;
 
 const bot = new TelegramBot(token, { polling: true });
 console.log("Telegram Bot is running...");
 
 bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, "أهلاً بك! أرسل رابط اللايف أو اسم المستخدم لبدء التكبيس.");
+    if (msg.from.id !== ADMIN_ID) return;
+    bot.sendMessage(msg.chat.id, "أهلاً بك يا غالي! أرسل رابط اللايف أو اسم المستخدم لبدء التكبيس.");
 });
 
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
+    
+    // التحقق من الأي دي (فلتر الحماية)
+    if (msg.from.id !== ADMIN_ID) {
+        return bot.sendMessage(chatId, "عذراً، هذا البوت مخصص للاستخدام الشخصي فقط.");
+    }
+
     const text = msg.text;
     if (!text || text.startsWith('/')) return;
 
@@ -39,7 +43,7 @@ bot.on('message', async (msg) => {
         }, 1000);
 
         tiktokLiveConnection.on('disconnected', () => {
-            clearInterval(tapInterval);
+            clearInterval(tapIntent);
             bot.sendMessage(chatId, `انتهى بث @${username}.`);
         });
 
